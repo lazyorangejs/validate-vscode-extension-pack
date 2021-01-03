@@ -83,7 +83,7 @@ export interface MetadataItem {
 const getExtManifest = async (
   url: string
 ): Promise<{ owner: string; name: string; repoUrl: string }> => {
-  const repository: { url: string } = await fetch(url, {
+  const repository: { url: string } | string = await fetch(url, {
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
     },
@@ -91,7 +91,11 @@ const getExtManifest = async (
     .then(resp => resp.json())
     .then(resp => resp.repository)
 
-  if (!repository.url) {
+  if (typeof repository === 'string') {
+    return { ...GitUrlParse(repository), repoUrl: repository }
+  }
+
+  if (typeof repository === 'object' && !repository.url) {
     throw new Error(
       'repoUrl should be valid url, for instance https://github.com/microsoft/vscode-docker'
     )

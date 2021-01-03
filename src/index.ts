@@ -4,6 +4,7 @@ import { isValid, decode } from 'js-base64'
 import fs, { existsSync, readJSONSync } from 'fs-extra'
 import { resolve } from 'path'
 import sortBy from 'lodash.sortby'
+import * as program from 'commander'
 
 import {
   Extension,
@@ -22,7 +23,7 @@ type ExtensionNotFound = {
 }
 
 const octokit = new Octokit({
-  auth: 'd7a4a5dfeb47908a04dd401f6a1c1fc7322e1881',
+  auth: process.env.GITHUB_TOKEN,
 })
 
 const getGithubRepoInfo = async (owner: string, repo: string) => {
@@ -51,12 +52,12 @@ type ExtWithLinks = {
   licence: null | string
 }
 
-const addLinks = (
-  items: ReadonlyArray<string>
-): ReadonlyArray<ExtWithLinks & {
+type VSExtension = ExtWithLinks & {
   lastUpdated: string
   licenceUrl: null | string
-}> => {
+}
+
+const addLinks = (items: ReadonlyArray<string>): ReadonlyArray<VSExtension> => {
   return items.map(name => {
     const [publisherName, extname] = name.split('.')
 
@@ -85,7 +86,10 @@ export const downloadVsixExtensionManifestFromGithub = async (
   const content = get(resp.data, 'content')
   if (content && isValid(content)) {
     const pkg = JSON.parse(decode(content))
-    return (pkg.extensionPack as string[]).map(itm => itm.toLowerCase())
+    // https://code.visualstudio.com/api/references/extension-manifest#fields
+    const extensionDependencies: string[] =
+      pkg.extensionPack || pkg.extensionDependencies
+    return extensionDependencies.map(itm => itm.toLowerCase())
   }
   return []
 }
@@ -111,7 +115,7 @@ const extName = (publisherName: string, name: string) => {
 }
 
 /**
- * It check that all extensions are added to extension pack from Official VS Code marketplace are presented in OpenVSX store.
+ * It check that all extensions which are added to extension pack from Official VS Code marketplace are presented in Open VSX store.
  *
  * @example vymarkov.nodejs-devops-extension-pack
  * @see https://marketplace.visualstudio.com/items?itemName=vymarkov.nodejs-devops-extension-pack
@@ -119,7 +123,7 @@ const extName = (publisherName: string, name: string) => {
  *
  * @param {string} extensionPackName
  */
-const checkExtensionsInOpenVsxFromVSCodeMarketplace = async (
+export const checkExtensionsInOpenVsxFromVSCodeMarketplace = async (
   openVsxExtensionMap: Map<string, { id: string }>,
   extensionPackName: string
 ) => {
@@ -167,11 +171,9 @@ const checkExtensionsInOpenVsxFromVSCodeMarketplace = async (
   }
 }
 
-// @ts-ignore
-const main = async (extensionPackName: string) => {
-  // await octokit.auth({ auth: 'd7a4a5dfeb47908a04dd401f6a1c1fc7322e1881' })
-
-  const filepath = resolve(process.cwd(), '.tmp', 'extensions.json')
+const ensureExtensionsFileAndReturnMap = async (
+  filepath: string = resolve(process.cwd(), '.tmp', 'extensions.json')
+) => {
   if (!existsSync(filepath)) {
     const body = await downloadOpenVsxExtensionsList()
     fs.outputJSONSync(filepath, body)
@@ -183,13 +185,22 @@ const main = async (extensionPackName: string) => {
       itm,
     ])
   )
-  const resp = await checkExtensionsInOpenVsxFromVSCodeMarketplace(
+
+  return openVsxExtensionList
+}
+
+const getExtensionThatNotPresentOnOpenVSX = async (
+  extensionPackName: string
+) => {
+  const openVsxExtensionList = await ensureExtensionsFileAndReturnMap()
+
+  const extensions = await checkExtensionsInOpenVsxFromVSCodeMarketplace(
     openVsxExtensionList,
     extensionPackName
   )
 
   await Promise.allSettled(
-    resp.notfound.map(async item => {
+    extensions.notfound.map(async item => {
       const info: Extension = await getExtInfoFromMicrosoftStore(item.name)
       const repo = await getRepoByVsixManifest(info)
       item.repoUrl = repo.repoUrl
@@ -198,29 +209,52 @@ const main = async (extensionPackName: string) => {
         repo.owner,
         repo.name
       )
-      item.licenceUrl = html_url!
+      item.licenceUrl = html_url! || null
       item.licence = spdx_id!
     })
   )
   //
-  const notfound = sortBy([...resp.notfound], itm => new Date(itm.lastUpdated))
-  const withLicence = notfound.filter(itm => ids.includes(itm.licence))
-  const withoutLicence = notfound.filter(itm => !ids.includes(itm.licence))
-  console.log('with licence', withLicence, withLicence.length)
-  console.log('without licence', withoutLicence, withoutLicence.length)
-}
-
-// @ts-ignore
-const main1 = async () => {
-  const info: Extension = await getExtInfoFromMicrosoftStore(
-    'wmaurer.change-case'
+  const notfound = sortBy(
+    [...extensions.notfound],
+    itm => new Date(itm.lastUpdated)
   )
-  console.log(info.versions[0].files)
+  const notFundWithLicence = notfound.filter(itm => ids.includes(itm.licence))
+  const notfoundWithoutLicence = notfound.filter(
+    itm => !ids.includes(itm.licence)
+  )
 
-  const repo = await getRepoByVsixManifest(info)
-  console.log(repo)
+  return { notFundWithLicence, notfoundWithoutLicence }
 }
 
-main('vymarkov.nodejs-devops-extension-pack')
-  .then(resp => console.log(resp))
-  .catch(err => console.error(err))
+// const extensionPackName = 'vymarkov.nodejs-devops-extension-pack'
+// const extensionPackName = 'burkeholland.vs-code-can-do-that'
+// const extensionPackName = 'jabacchetta.vscode-essentials'
+// const extensionPackName = 'mubaidr.vuejs-extension-pack'
+// const extensionPackName = 'formulahendry.auto-complete-tag'
+
+program
+  .version('0.0.1')
+  .option(
+    '-n, --ext-name <string>',
+    "Extension pack's name",
+    async (extensionPackName: string) => {
+      const {
+        notFundWithLicence,
+        notfoundWithoutLicence,
+      } = await getExtensionThatNotPresentOnOpenVSX(extensionPackName)
+      console.log(
+        'See below extensions that are not present in Open VSX marketplace:'
+      )
+      console.log('extensions with licence: ', notFundWithLicence)
+      console.log('extensions without licence: ', notfoundWithoutLicence)
+      console.log(
+        'Extensions without licence CAN NOT BE uploaded to Open VSX registry, LICENCE must be present'
+      )
+    }
+  )
+  .on('--help', () => {
+    console.log('Examples:')
+    console.log('')
+    console.log('  $ -n vymarkov.nodejs-devops-extension-pack')
+  })
+  .parse(process.argv)
