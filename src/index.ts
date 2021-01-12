@@ -6,11 +6,21 @@ import { resolve } from 'path'
 import sortBy from 'lodash.sortby'
 import * as program from 'commander'
 
+// @ts-ignore
+import { fetchExtInfoFromClonedRepo } from 'publish-to-open-vsx/add-extension'
+// @ts-ignore
+import { addNewExtension, writeToExtensionsFile } from 'publish-to-open-vsx/add-extension'
+// @ts-ignore
+import { onDidAddExtension, readExtensionsFromFile } from 'publish-to-open-vsx/add-extension'
+
 import {
+  downloadPackageJsonFromGithub,
   Extension,
+  extractExtensionPackFromPackageJson,
   findExtByNameInOpenVSX,
   getExtInfoFromMicrosoftStore,
   getRepoByVsixManifest,
+  isExtensionPack,
 } from './utils'
 import { OpenVsxExtension } from './types/openvsx'
 // @ts-ignore
@@ -21,6 +31,17 @@ type ExtensionNotFound = {
   name: string
   notFound: boolean
 }
+
+const deprecatedExtensionsMap = new Map([
+  ['peterjausovec.vscode-docker', 'ms-azuretools.vscode-docker'],
+])
+
+/**
+ * Some of extenions can not be published to OpenVSX registry,
+ * cause the extenion must be open sourced.
+ * @see https://github.com/wallabyjs/public/issues/2436#issuecomment-741415194
+ */
+const extensionsDontMeetOpenVSXConditons = ['wallabyjs.quokka-vscode']
 
 const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN,
@@ -63,8 +84,7 @@ const addLinks = (items: ReadonlyArray<string>): ReadonlyArray<VSExtension> => {
 
     return {
       name,
-      msmarketplace:
-        'https://marketplace.visualstudio.com/items?itemName=' + name,
+      msmarketplace: 'https://marketplace.visualstudio.com/items?itemName=' + name,
       openvsx: `https://open-vsx.org/extension/${publisherName}/${extname}`,
       repoUrl: null,
       licence: null,
@@ -72,26 +92,6 @@ const addLinks = (items: ReadonlyArray<string>): ReadonlyArray<VSExtension> => {
       lastUpdated: '',
     }
   })
-}
-
-export const downloadVsixExtensionManifestFromGithub = async (
-  owner: string,
-  repo: string
-): Promise<ReadonlyArray<string>> => {
-  const resp = await octokit.repos.getContent({
-    owner,
-    repo,
-    path: 'package.json',
-  })
-  const content = get(resp.data, 'content')
-  if (content && isValid(content)) {
-    const pkg = JSON.parse(decode(content))
-    // https://code.visualstudio.com/api/references/extension-manifest#fields
-    const extensionDependencies: string[] =
-      pkg.extensionPack || pkg.extensionDependencies
-    return extensionDependencies.map(itm => itm.toLowerCase())
-  }
-  return []
 }
 
 export const downloadOpenVsxExtensionsList = async (
@@ -128,19 +128,20 @@ export const checkExtensionsInOpenVsxFromVSCodeMarketplace = async (
   extensionPackName: string
 ) => {
   const info: Extension = await getExtInfoFromMicrosoftStore(extensionPackName)
-  const repo = await getRepoByVsixManifest(info)
+  let repo
 
-  const list = await downloadVsixExtensionManifestFromGithub(
-    repo.owner,
-    repo.name
-  )
+  try {
+    repo = await getRepoByVsixManifest(info)
+  } catch (err) {
+    throw new Error('Extension pack not found')
+  }
+
+  const pkg = await downloadPackageJsonFromGithub(repo.owner, repo.name)
+  const list = extractExtensionPackFromPackageJson(pkg)
 
   const notfound = list.filter(id => !openVsxExtensionMap.has(id))
 
-  const extensionsFromOpenVSX: (
-    | OpenVsxExtension
-    | ExtensionNotFound
-  )[] = await Promise.all(
+  const extensionsFromOpenVSX: (OpenVsxExtension | ExtensionNotFound)[] = await Promise.all(
     notfound.map(extID => {
       const [publisherName, extName] = extID.split('.')
       return findExtByNameInOpenVSX(publisherName, extName)
@@ -150,23 +151,16 @@ export const checkExtensionsInOpenVsxFromVSCodeMarketplace = async (
   const extensionsFromOpenVSXMap = new Map<string, { id: string }>(
     (extensionsFromOpenVSX as OpenVsxExtension[])
       .filter(itm => !('notFound' in itm))
-      .map(itm => [
-        extName(itm.namespace, itm.name),
-        { id: extName(itm.namespace, itm.name) },
-      ])
+      .map(itm => [extName(itm.namespace, itm.name), { id: extName(itm.namespace, itm.name) }])
   )
 
   return {
     all: list,
     found: addLinks(
-      list.filter(
-        id => openVsxExtensionMap.has(id) || extensionsFromOpenVSXMap.has(id)
-      )
+      list.filter(id => openVsxExtensionMap.has(id) || extensionsFromOpenVSXMap.has(id))
     ),
     notfound: addLinks(
-      list.filter(
-        id => !(openVsxExtensionMap.has(id) || extensionsFromOpenVSXMap.has(id))
-      )
+      list.filter(id => !(openVsxExtensionMap.has(id) || extensionsFromOpenVSXMap.has(id)))
     ),
   }
 }
@@ -180,18 +174,13 @@ const ensureExtensionsFileAndReturnMap = async (
   }
 
   const openVsxExtensionList = new Map<string, { id: string }>(
-    readJSONSync(filepath).extensions.map((itm: { id: string }) => [
-      itm.id.toLowerCase(),
-      itm,
-    ])
+    readJSONSync(filepath).extensions.map((itm: { id: string }) => [itm.id.toLowerCase(), itm])
   )
 
   return openVsxExtensionList
 }
 
-const getExtensionThatNotPresentOnOpenVSX = async (
-  extensionPackName: string
-) => {
+const getExtensionThatNotPresentOnOpenVSX = async (extensionPackName: string) => {
   const openVsxExtensionList = await ensureExtensionsFileAndReturnMap()
 
   const extensions = await checkExtensionsInOpenVsxFromVSCodeMarketplace(
@@ -205,53 +194,147 @@ const getExtensionThatNotPresentOnOpenVSX = async (
       const repo = await getRepoByVsixManifest(info)
       item.repoUrl = repo.repoUrl
       item.lastUpdated = info.lastUpdated
-      const { spdx_id, html_url } = await getLicenceSpdxIdByRepoName(
-        repo.owner,
-        repo.name
-      )
+      const { spdx_id, html_url } = await getLicenceSpdxIdByRepoName(repo.owner, repo.name)
       item.licenceUrl = html_url! || null
       item.licence = spdx_id!
     })
   )
   //
-  const notfound = sortBy(
-    [...extensions.notfound],
-    itm => new Date(itm.lastUpdated)
-  )
-  const notFundWithLicence = notfound.filter(itm => ids.includes(itm.licence))
-  const notfoundWithoutLicence = notfound.filter(
-    itm => !ids.includes(itm.licence)
+  const notfound = sortBy([...extensions.notfound], itm => new Date(itm.lastUpdated))
+  const deprecatedExtensions = extensions.all.filter(name => deprecatedExtensionsMap.has(name))
+  const dontMeetConditions = extensions.all.filter(name =>
+    Boolean(extensionsDontMeetOpenVSXConditons.find(itm => itm === name))
   )
 
-  return { notFundWithLicence, notfoundWithoutLicence }
+  const notFoundWithLicence = notfound.filter(itm => ids.includes(itm.licence))
+  const notFoundWithoutLicence = notfound.filter(itm => !ids.includes(itm.licence))
+
+  return {
+    notFoundWithLicence,
+    notFoundWithoutLicence,
+    deprecatedExtensions,
+    dontMeetConditions,
+  }
 }
 
-// const extensionPackName = 'vymarkov.nodejs-devops-extension-pack'
-// const extensionPackName = 'burkeholland.vs-code-can-do-that'
-// const extensionPackName = 'jabacchetta.vscode-essentials'
-// const extensionPackName = 'mubaidr.vuejs-extension-pack'
-// const extensionPackName = 'formulahendry.auto-complete-tag'
+const getExtensionNamesFromFile = async (extensionsFile: string) => {
+  const { extensions }: { extensions: { id: string }[] } = await readExtensionsFromFile(
+    extensionsFile
+  )
+  return (extensions ?? []).map(itm => itm.id)
+}
+
+const addExtensions = async (notAddedExtensions: VSExtension[], extensionsFile: string) => {
+  if (notAddedExtensions.length === 0) {
+    return
+  }
+  const filepath = resolve(process.cwd(), extensionsFile)
+  const { extensions } = await readExtensionsFromFile(filepath)
+  const repos = notAddedExtensions.map(itm => itm.repoUrl)
+
+  const extensionsToAdd = []
+  for (const repository of repos) {
+    const resp = await fetchExtInfoFromClonedRepo(repository, {})
+    await addNewExtension(resp.extension, resp.package, extensions)
+    extensionsToAdd.push(resp.extension)
+  }
+  extensionsToAdd.forEach(extension => onDidAddExtension(extension))
+  await writeToExtensionsFile(extensions, extensionsFile)
+}
+
+// vymarkov.nodejs-devops-extension-pack
+// jabacchetta.vscode-essentials
+// mubaidr.vuejs-extension-pack
+// formulahendry.auto-complete-tag
+// afractal.node-essentials
 
 program
   .version('0.0.1')
-  .option(
-    '-n, --ext-name <string>',
-    "Extension pack's name",
-    async (extensionPackName: string) => {
-      const {
-        notFundWithLicence,
-        notfoundWithoutLicence,
-      } = await getExtensionThatNotPresentOnOpenVSX(extensionPackName)
-      console.log(
-        'See below extensions that are not present in Open VSX marketplace:'
-      )
-      console.log('extensions with licence: ', notFundWithLicence)
-      console.log('extensions without licence: ', notfoundWithoutLicence)
-      console.log(
-        'Extensions without licence CAN NOT BE uploaded to Open VSX registry, LICENCE must be present'
-      )
-    }
+  .command('add <extension-name> [extensions.json]')
+  .description(
+    'add extension or extension pack to extension.json to publish to Open VSX, by default command will add extensions only if pack meet all conditions'
   )
+  .action(async (name: string, extensionsFile: string, program) => {
+    try {
+      const extensionsFromFile: string[] = await getExtensionNamesFromFile(extensionsFile)
+
+      if (await isExtensionPack(name)) {
+        const {
+          notFoundWithLicence,
+          notFoundWithoutLicence,
+          deprecatedExtensions,
+          dontMeetConditions,
+        } = await getExtensionThatNotPresentOnOpenVSX(name)
+
+        if (dontMeetConditions.length > 0) {
+          console.log(
+            'Extension that are not open source can not be published to Open VSX registry due to licence restiction'
+          )
+          console.log(
+            'You can read more at https://github.com/wallabyjs/public/issues/2436#issuecomment-741415194'
+          )
+          console.log(dontMeetConditions)
+        }
+
+        if (deprecatedExtensions.length > 0) {
+          console.log(
+            'Some of extensions are deprecated, you have to update extension ids in order to publish the extension pack.'
+          )
+          for (const id of deprecatedExtensions.values()) {
+            console.log(
+              `You need to update extension id from "${id}" to "${deprecatedExtensionsMap.get(id)}"`
+            )
+          }
+          console.log(' ')
+        }
+
+        if (notFoundWithLicence.length > 0) {
+          console.log('See below extensions that are not present in Open VSX marketplace:')
+          console.log(
+            `extensions with licence (${notFoundWithLicence.length}):`,
+            notFoundWithLicence
+          )
+        }
+
+        if (notFoundWithoutLicence.length > 0) {
+          console.log(
+            `extensions without licence (${notFoundWithoutLicence.length}):`,
+            notFoundWithoutLicence
+          )
+          console.log(
+            'Extensions without licence CAN NOT BE uploaded to Open VSX registry, LICENCE must be present'
+          )
+        }
+
+        const allConditionsAreMet =
+          !notFoundWithLicence.length &&
+          !notFoundWithoutLicence.length &&
+          !deprecatedExtensions.length &&
+          !dontMeetConditions.length
+        if (allConditionsAreMet) {
+          console.log('All extensions are present in Open VSX marketplace.')
+        }
+
+        if (allConditionsAreMet || program.addExtensionsWithLicence) {
+          console.log(`Adding extensions with defined licence to ${extensionsFile}`)
+
+          const extensionsToAdd = notFoundWithLicence.filter(
+            itm => !extensionsFromFile.find(name => itm.name === name)
+          )
+          await addExtensions(extensionsToAdd, extensionsFile)
+        }
+      } else {
+        console.log('Adding extension by name is not supported!')
+      }
+    } catch (err) {
+      console.log(err.message)
+    }
+  })
+  .option(
+    '--add-extensions-with-licence',
+    'Add extensions that have licence even if extension pack contains extensions without licence'
+  )
+  .option('--extension-name <string>', "Extension's name to add")
   .on('--help', () => {
     console.log('Examples:')
     console.log('')

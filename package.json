@@ -26,13 +26,13 @@
     }
   },
   "prettier": {
-    "printWidth": 80,
+    "printWidth": 100,
     "semi": false,
     "singleQuote": true,
     "trailingComma": "es5"
   },
   "name": "validate-vscode-extension-pack",
-  "author": "Vitaly Markov",
+  "author": "Vitaly Markov <vymarkov@gmail.com>",
   "module": "dist/cmd.esm.js",
   "size-limit": [
     {
@@ -68,6 +68,7 @@
     "lodash.get": "^4.4.2",
     "lodash.sortby": "^4.7.0",
     "node-fetch": "^2.6.1",
+    "publish-to-open-vsx": "vymarkov/publish-extensions#refactor-add-extension-util",
     "request": "^2.88.2",
     "spdx-license-ids": "^3.0.7",
     "vsce": "^1.83.0",

@@ -1,6 +1,13 @@
 import fetch from 'node-fetch'
 import GitUrlParse from 'git-url-parse'
 import { ExtensionNotFound, OpenVsxExtension } from './types/openvsx'
+import { isValid, decode } from 'js-base64'
+import get from 'lodash.get'
+import { Octokit } from '@octokit/rest'
+
+const octokit = new Octokit({
+  auth: process.env.GITHUB_TOKEN,
+})
 
 export interface ExtensionQuery {
   results: Result[]
@@ -80,6 +87,11 @@ export interface MetadataItem {
   count: number
 }
 
+export type PackageJson = {
+  extensionPack: ReadonlyArray<string>
+  extensionDependencies: ReadonlyArray<string>
+}
+
 const getExtManifest = async (
   url: string
 ): Promise<{ owner: string; name: string; repoUrl: string }> => {
@@ -107,11 +119,12 @@ const getExtManifest = async (
 export const getRepoByVsixManifest = (
   ext: Extension
 ): Promise<{ owner: string; name: string; repoUrl: string }> => {
+  if (!ext) {
+    throw new Error('Extension should not be empty')
+  }
   const assetUrl = ext.versions
     .shift()
-    ?.files.find(
-      itm => itm.assetType === AssetType.MicrosoftVisualStudioCodeManifest
-    )?.source
+    ?.files.find(itm => itm.assetType === AssetType.MicrosoftVisualStudioCodeManifest)?.source
 
   if (!assetUrl) {
     throw new Error('assetUrl should be valid url to ext manifest')
@@ -131,19 +144,15 @@ export const findExtByNameInOpenVSX = async (
     },
   })
     .then(res => res.json())
-    .then(
-      (
-        ext: OpenVsxExtension | { error: string; unrelatedPublisher: false }
-      ) => {
-        return 'error' in ext
-          ? {
-              publisherName: publisherName.toLowerCase(),
-              name: name.toLowerCase(),
-              notFound: true,
-            }
-          : ext
-      }
-    )
+    .then((ext: OpenVsxExtension | { error: string; unrelatedPublisher: false }) => {
+      return 'error' in ext
+        ? {
+            publisherName: publisherName.toLowerCase(),
+            name: name.toLowerCase(),
+            notFound: true,
+          }
+        : ext
+    })
     .catch(() => ({
       publisherName: publisherName.toLowerCase(),
       name: name.toLowerCase(),
@@ -151,46 +160,75 @@ export const findExtByNameInOpenVSX = async (
     }))
 }
 
-export const getExtInfoFromMicrosoftStore = async (
-  extName: string
-): Promise<Extension> =>
-  fetch(
-    'https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery',
-    {
-      method: 'POST',
-      headers: {
-        Authority: 'marketplace.visualstudio.com',
-        Accept: 'application/json;api-version=6.1-preview.1;excludeUrls=true',
-        'X-Vss-Reauthenticationaction': 'Suppress',
-        'X-Requested-With': 'XMLHttpRequest',
-        'X-Tfs-Session': 'f9c6bb9c-8611-4b61-bf08-daa1f06fa2c6',
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.183 Safari/537.36 OPR/72.0.3815.320',
-        'Content-Type': 'application/json',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip',
-      },
-      body: JSON.stringify({
-        assetTypes: null,
-        filters: [
-          {
-            criteria: [
-              {
-                filterType: 7,
-                value: extName,
-              },
-            ],
-            direction: 2,
-            pageSize: 100,
-            pageNumber: 1,
-            sortBy: 0,
-            sortOrder: 0,
-            pagingToken: null,
-          },
-        ],
-        flags: 103,
-      }),
-    }
-  )
-    .then(resp => resp.json())
+export const extractExtensionPackFromPackageJson = (pkg: PackageJson): ReadonlyArray<string> => {
+  // https://code.visualstudio.com/api/references/extension-manifest#fields
+  return (pkg.extensionPack || pkg.extensionDependencies || []).map(itm => itm.toLowerCase())
+}
+
+export const downloadPackageJsonFromGithub = async (
+  owner: string,
+  repo: string
+): Promise<PackageJson> => {
+  const resp = await octokit.repos.getContent({
+    owner,
+    repo,
+    path: 'package.json',
+  })
+  const content = get(resp.data, 'content')
+  if (content && isValid(content)) {
+    const pkg = JSON.parse(decode(content))
+    return pkg
+  }
+  return { extensionPack: [], extensionDependencies: [] }
+}
+
+export const isExtensionPack = async (name: string) => {
+  const ext = await getExtInfoFromMicrosoftStore(name)
+  if (!ext) {
+    throw new Error(`Extension (${name}) not found`)
+  }
+  const repo = await getRepoByVsixManifest(ext)
+  const pkg = await downloadPackageJsonFromGithub(repo.owner, repo.name)
+  return extractExtensionPackFromPackageJson(pkg).length > 0
+}
+
+export const getExtInfoFromMicrosoftStore = async (extName: string): Promise<Extension> =>
+  fetch('https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery', {
+    method: 'POST',
+    headers: {
+      Authority: 'marketplace.visualstudio.com',
+      Accept: 'application/json;api-version=6.1-preview.1;excludeUrls=true',
+      'X-Vss-Reauthenticationaction': 'Suppress',
+      'X-Requested-With': 'XMLHttpRequest',
+      'X-Tfs-Session': 'f9c6bb9c-8611-4b61-bf08-daa1f06fa2c6',
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.183 Safari/537.36 OPR/72.0.3815.320',
+      'Content-Type': 'application/json',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip',
+    },
+    body: JSON.stringify({
+      assetTypes: null,
+      filters: [
+        {
+          criteria: [
+            {
+              filterType: 7,
+              value: extName,
+            },
+          ],
+          direction: 2,
+          pageSize: 100,
+          pageNumber: 1,
+          sortBy: 0,
+          sortOrder: 0,
+          pagingToken: null,
+        },
+      ],
+      flags: 103,
+    }),
+  })
+    .then(async resp => {
+      return resp.json()
+    })
     .then(resp => resp?.results?.pop().extensions?.pop())
