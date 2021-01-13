@@ -7747,7 +7747,7 @@ public-encrypt@^4.0.0:
     randombytes "^2.0.1"
     safe-buffer "^5.1.2"
 
-"publish-to-open-vsx@github:vymarkov/publish-extensions#refactor-add-extension-util", publish-to-open-vsx@vymarkov/publish-extensions#refactor-add-extension-util:
+publish-to-open-vsx@vymarkov/publish-extensions#refactor-add-extension-util:
   version "0.0.0"
   resolved "https://codeload.github.com/vymarkov/publish-extensions/tar.gz/6c38e6c987a735a6ba9299db020794a9e8d6a371"
   dependencies:

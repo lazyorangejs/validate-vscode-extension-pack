@@ -13,10 +13,11 @@
   "scripts": {
     "dev": "tsdx watch",
     "build": "tsdx build",
+    "postbuild": "cp ./src/cmd.js ./dist/cli.js",
     "test": "tsdx test",
     "lint": "tsdx lint",
     "fmt": "yarn lint --fix",
-    "prepare": "tsdx build",
+    "prepare": "npm run build",
     "size": "size-limit",
     "analyze": "size-limit --why"
   },
