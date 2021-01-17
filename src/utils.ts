@@ -262,7 +262,7 @@ const getGithubRepoInfo = async (owner: string, repo: string) => {
   return info?.data
 }
 
-const getLicenceSpdxIdByRepoName = async (
+const getlicenseSpdxIdByRepoName = async (
   owner: string,
   repo: string
 ): Promise<{ html_url: string | undefined; spdx_id?: string | null }> => {
@@ -296,8 +296,8 @@ const addLinks = (items: ReadonlyArray<string>): ReadonlyArray<VSExtension> => {
       msmarketplaceUrl: 'https://marketplace.visualstudio.com/items?itemName=' + name,
       openvsx: `https://open-vsx.org/extension/${publisherName}/${extname}`,
       repoUrl: null,
-      licence: null,
-      licenceUrl: null,
+      license: null,
+      licenseUrl: null,
       lastUpdated: '',
     }
   })
@@ -387,9 +387,9 @@ export const getExtensionThatNotPresentOnOpenVSX = async (extensionPackName: str
       const repo = await getRepoByVsixManifest(info)
       item.repoUrl = repo.repoUrl
       item.lastUpdated = info.lastUpdated
-      const { spdx_id, html_url } = await getLicenceSpdxIdByRepoName(repo.owner, repo.name)
-      item.licenceUrl = html_url! || null
-      item.licence = spdx_id!
+      const { spdx_id, html_url } = await getlicenseSpdxIdByRepoName(repo.owner, repo.name)
+      item.licenseUrl = html_url! || null
+      item.license = spdx_id!
     })
   )
   //
@@ -399,24 +399,24 @@ export const getExtensionThatNotPresentOnOpenVSX = async (extensionPackName: str
     Boolean(extensionsDontMeetOpenVSXConditons.find(itm => itm === name))
   )
 
-  const notFoundWithLicence = notfound.filter(
+  const notFoundWithlicense = notfound.filter(
     itm =>
-      ids.includes(itm.licence) &&
+      ids.includes(itm.license) &&
       !deprecatedExtensions.includes(itm.name) &&
       !dontMeetConditions.includes(itm.name)
   )
 
-  const notFoundWithoutLicence = notfound.filter(
+  const notFoundWithoutlicense = notfound.filter(
     itm =>
-      !ids.includes(itm.licence) &&
+      !ids.includes(itm.license) &&
       !deprecatedExtensions.includes(itm.name) &&
       !dontMeetConditions.includes(itm.name)
   )
 
   return {
     all: new Map(notfound.map(itm => [itm.name, itm])),
-    notFoundWithLicence,
-    notFoundWithoutLicence,
+    notFoundWithlicense,
+    notFoundWithoutlicense,
     deprecatedExtensions,
     dontMeetConditions,
   }

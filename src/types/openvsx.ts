@@ -5,12 +5,12 @@ export type ExtWithLinks = {
   msmarketplaceUrl: string
   openvsx: string
   repoUrl: string | null
-  licence: null | string
+  license: null | string
 }
 
 export type VSExtension = ExtWithLinks & {
   lastUpdated: string
-  licenceUrl: null | string
+  licenseUrl: null | string
 }
 
 export type ExtensionNotFound = {

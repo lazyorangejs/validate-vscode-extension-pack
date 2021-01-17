@@ -65,8 +65,8 @@ program
       if (await isExtensionPack(name)) {
         const {
           all,
-          notFoundWithLicence,
-          notFoundWithoutLicence,
+          notFoundWithlicense,
+          notFoundWithoutlicense,
           deprecatedExtensions,
           dontMeetConditions,
         } = await getExtensionThatNotPresentOnOpenVSX(name)
@@ -118,40 +118,40 @@ program
         }
         console.log(' ')
 
-        if (notFoundWithLicence.length > 0) {
+        if (notFoundWithlicense.length > 0) {
           console.log('See below extensions that are not present in Open VSX marketplace:')
           console.log(
-            `extensions with licence (${notFoundWithLicence.length}):`,
-            notFoundWithLicence
+            `extensions with license (${notFoundWithlicense.length}):`,
+            notFoundWithlicense
           )
         }
 
-        if (notFoundWithoutLicence.length > 0) {
+        if (notFoundWithoutlicense.length > 0) {
           console.log(
-            `extensions without licence (${notFoundWithoutLicence.length}):`,
-            notFoundWithoutLicence
+            `extensions without license (${notFoundWithoutlicense.length}):`,
+            notFoundWithoutlicense
           )
           console.log(
-            'Extensions without licence CAN NOT BE uploaded to Open VSX registry, LICENCE must be present'
+            'Extensions without license CAN NOT BE uploaded to Open VSX registry, license must be present'
           )
         }
 
         const allConditionsAreMet =
-          !notFoundWithLicence.length &&
-          !notFoundWithoutLicence.length &&
+          !notFoundWithlicense.length &&
+          !notFoundWithoutlicense.length &&
           !deprecatedExtensions.length &&
           !dontMeetConditions.length
         if (allConditionsAreMet) {
           console.log('All extensions are present in Open VSX marketplace.')
         }
 
-        if (allConditionsAreMet || program.addExtensionsWithLicence) {
-          const extensionsToAdd = notFoundWithLicence.filter(
+        if (allConditionsAreMet || program.addExtensionsWithlicense) {
+          const extensionsToAdd = notFoundWithlicense.filter(
             itm => !extensionsFromFile.find(name => itm.name === name)
           )
 
           if (extensionsToAdd.length > 0) {
-            console.log(`Adding extensions with defined licence to ${extensionsFile}`)
+            console.log(`Adding extensions with defined license to ${extensionsFile}`)
             await addExtensions(extensionsToAdd, extensionsFile)
           }
         }
@@ -164,8 +164,8 @@ program
     }
   })
   .option(
-    '--add-extensions-with-licence',
-    'Add extensions that have licence even if extension pack contains extensions without licence'
+    '--add-extensions-with-license',
+    'Add extensions that have license even if extension pack contains extensions without license'
   )
   .option('--extension-name <string>', "Extension's name to add")
   .on('--help', () => {
