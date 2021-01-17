@@ -1,6 +1,6 @@
-#!/usr/bin/env node
-
 import * as program from 'commander'
+// @ts-ignore
+import cf from 'colorfy'
 import { resolve } from 'path'
 
 // @ts-ignore
@@ -12,7 +12,10 @@ import { onDidAddExtension, readExtensionsFromFile } from 'publish-to-open-vsx/a
 import { VSExtension } from './types/openvsx'
 import {
   deprecatedExtensionsMap,
+  Extension,
   getExtensionThatNotPresentOnOpenVSX,
+  getExtInfoFromMicrosoftStore,
+  getRepoByVsixManifest,
   isExtensionPack,
 } from './utils'
 
@@ -55,10 +58,13 @@ program
   )
   .action(async (name: string, extensionsFile: string, program) => {
     try {
+      const extPackInfo: Extension = await getExtInfoFromMicrosoftStore(name)
+      const repo = await getRepoByVsixManifest(extPackInfo)
       const extensionsFromFile: string[] = await getExtensionNamesFromFile(extensionsFile)
 
       if (await isExtensionPack(name)) {
         const {
+          all,
           notFoundWithLicence,
           notFoundWithoutLicence,
           deprecatedExtensions,
@@ -67,25 +73,50 @@ program
 
         if (dontMeetConditions.length > 0) {
           console.log(
-            'Extension that are not open source can not be published to Open VSX registry due to licence restiction'
+            'Some of extensions are not open source thus can not published to Open VSX from https://github.com/open-vsx/publish-extensions'
           )
-          console.log(
-            'You can read more at https://github.com/wallabyjs/public/issues/2436#issuecomment-741415194'
-          )
-          console.log(dontMeetConditions)
+          console.log('You need to ask authors to publish extension by himself:')
+          dontMeetConditions
+            .filter(itm => all.has(itm))
+            .map(itm => all.get(itm))
+            .forEach(itm => {
+              if (itm?.msmarketplaceUrl) {
+                console.log(
+                  cf()
+                    .green(itm?.msmarketplaceUrl)
+                    .colorfy()
+                )
+              } else if (itm?.repoUrl) {
+                console.log(
+                  cf()
+                    .green(itm?.repoUrl)
+                    .colorfy()
+                )
+              }
+            })
         }
+        console.log(' ')
 
         if (deprecatedExtensions.length > 0) {
           console.log(
             'Some of extensions are deprecated, you have to update extension ids in order to publish the extension pack.'
           )
-          for (const id of deprecatedExtensions.values()) {
+          for (const id of deprecatedExtensions) {
             console.log(
-              `You need to update extension id from "${id}" to "${deprecatedExtensionsMap.get(id)}"`
+              `Extension id should be updated from ${cf()
+                .red(id)
+                .colorfy()} to ${cf()
+                .green(deprecatedExtensionsMap.get(id))
+                .colorfy()}`
+            )
+            console.log(
+              `Please ask ext pack\'s authors to update extension id at ${cf()
+                .green(repo.repoUrl + '/issues')
+                .colorfy()}`
             )
           }
-          console.log(' ')
         }
+        console.log(' ')
 
         if (notFoundWithLicence.length > 0) {
           console.log('See below extensions that are not present in Open VSX marketplace:')

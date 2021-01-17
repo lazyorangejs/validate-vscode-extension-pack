@@ -2,7 +2,7 @@
 
 export type ExtWithLinks = {
   name: string
-  msmarketplace: string
+  msmarketplaceUrl: string
   openvsx: string
   repoUrl: string | null
   licence: null | string

@@ -110,6 +110,7 @@ const getExtManifest = async (
     },
   })
     .then(resp => resp.json())
+    // .then(resp => { console.log(resp); return resp })
     .then(resp => resp.repository)
 
   if (typeof repository === 'string') {
@@ -122,7 +123,10 @@ const getExtManifest = async (
     )
   }
 
-  return { ...GitUrlParse(repository.url), repoUrl: repository.url }
+  const parsedGitUrl = GitUrlParse(repository.url)
+  parsedGitUrl.git_suffix = false
+
+  return { ...parsedGitUrl, repoUrl: parsedGitUrl.toString('https') }
 }
 
 export const getRepoByVsixManifest = (
@@ -289,7 +293,7 @@ const addLinks = (items: ReadonlyArray<string>): ReadonlyArray<VSExtension> => {
 
     return {
       name,
-      msmarketplace: 'https://marketplace.visualstudio.com/items?itemName=' + name,
+      msmarketplaceUrl: 'https://marketplace.visualstudio.com/items?itemName=' + name,
       openvsx: `https://open-vsx.org/extension/${publisherName}/${extname}`,
       repoUrl: null,
       licence: null,
@@ -395,10 +399,22 @@ export const getExtensionThatNotPresentOnOpenVSX = async (extensionPackName: str
     Boolean(extensionsDontMeetOpenVSXConditons.find(itm => itm === name))
   )
 
-  const notFoundWithLicence = notfound.filter(itm => ids.includes(itm.licence))
-  const notFoundWithoutLicence = notfound.filter(itm => !ids.includes(itm.licence))
+  const notFoundWithLicence = notfound.filter(
+    itm =>
+      ids.includes(itm.licence) &&
+      !deprecatedExtensions.includes(itm.name) &&
+      !dontMeetConditions.includes(itm.name)
+  )
+
+  const notFoundWithoutLicence = notfound.filter(
+    itm =>
+      !ids.includes(itm.licence) &&
+      !deprecatedExtensions.includes(itm.name) &&
+      !dontMeetConditions.includes(itm.name)
+  )
 
   return {
+    all: new Map(notfound.map(itm => [itm.name, itm])),
     notFoundWithLicence,
     notFoundWithoutLicence,
     deprecatedExtensions,
