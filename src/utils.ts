@@ -247,11 +247,14 @@ export const getExtInfoFromMicrosoftStore = async (extName: string): Promise<Ext
     .then(resp => resp?.results?.pop().extensions?.pop())
 
 /**
- * Some of extenions can not be published to OpenVSX registry,
- * cause the extenion must be open sourced.
- * @see https://github.com/wallabyjs/public/issues/2436#issuecomment-741415194
+ * Some of extensions are not open source thus can not built and published to Open VSX from https://github.com/open-vsx/publish-extensions
+ *
+ * @see https://github.com/open-vsx/publish-extensions
  */
-const extensionsDontMeetOpenVSXConditons = ['wallabyjs.quokka-vscode']
+const extensionsDontMeetOpenVSXConditons = [
+  'wallabyjs.quokka-vscode',
+  'visualstudioexptteam.vscodeintellicode',
+]
 
 const getGithubRepoInfo = async (owner: string, repo: string) => {
   const info = await octokit.repos.get({
@@ -307,7 +310,7 @@ const extName = (publisherName: string, name: string) => {
   return `${publisherName}.${name}`.toLowerCase()
 }
 
-const ensureExtensionsFileAndReturnMap = async (
+export const ensureExtensionsFileAndReturnMap = async (
   filepath: string = resolve(process.cwd(), '.tmp', 'extensions.json')
 ) => {
   if (!existsSync(filepath)) {
@@ -323,7 +326,7 @@ const ensureExtensionsFileAndReturnMap = async (
 }
 
 /**
- * It check that all extensions which are added to extension pack from Official VS Code marketplace are presented in Open VSX store.
+ * It checks that all extensions which are added to extension pack from Official VS Code marketplace are presented in Open VSX store.
  *
  * @example vymarkov.nodejs-devops-extension-pack
  * @see https://marketplace.visualstudio.com/items?itemName=vymarkov.nodejs-devops-extension-pack
@@ -348,6 +351,7 @@ export const checkExtensionsInOpenVsxFromVSCodeMarketplace = async (
   const list = extractExtensionPackFromPackageJson(pkg)
 
   const notfound = list.filter(id => !openVsxExtensionMap.has(id))
+  notfound.push(extensionPackName)
 
   const extensionsFromOpenVSX: (OpenVsxExtension | ExtensionNotFound)[] = await Promise.all(
     notfound.map(extID => {
@@ -373,9 +377,10 @@ export const checkExtensionsInOpenVsxFromVSCodeMarketplace = async (
   }
 }
 
-export const getExtensionThatNotPresentOnOpenVSX = async (extensionPackName: string) => {
-  const openVsxExtensionList = await ensureExtensionsFileAndReturnMap()
-
+export const getExtensionThatNotPresentOnOpenVSX = async (
+  extensionPackName: string,
+  openVsxExtensionList: Map<string, { id: string }>
+) => {
   const extensions = await checkExtensionsInOpenVsxFromVSCodeMarketplace(
     openVsxExtensionList,
     extensionPackName

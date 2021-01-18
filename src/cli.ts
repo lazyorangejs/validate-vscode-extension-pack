@@ -1,4 +1,4 @@
-import * as program from 'commander'
+import * as commander from 'commander'
 // @ts-ignore
 import cf from 'colorfy'
 import { resolve } from 'path'
@@ -9,10 +9,12 @@ import { fetchExtInfoFromClonedRepo } from 'publish-to-open-vsx/add-extension'
 import { addNewExtension, writeToExtensionsFile } from 'publish-to-open-vsx/add-extension'
 // @ts-ignore
 import { onDidAddExtension, readExtensionsFromFile } from 'publish-to-open-vsx/add-extension'
-import { VSExtension } from './types/openvsx'
+import { OpenVsxExtension, VSExtension } from './types/openvsx'
 import {
   deprecatedExtensionsMap,
+  ensureExtensionsFileAndReturnMap,
   Extension,
+  findExtByNameInOpenVSX,
   getExtensionThatNotPresentOnOpenVSX,
   getExtInfoFromMicrosoftStore,
   getRepoByVsixManifest,
@@ -24,13 +26,6 @@ import {
 // mubaidr.vuejs-extension-pack
 // formulahendry.auto-complete-tag
 // afractal.node-essentials
-
-const getExtensionNamesFromFile = async (extensionsFile: string) => {
-  const { extensions }: { extensions: { id: string }[] } = await readExtensionsFromFile(
-    extensionsFile
-  )
-  return (extensions ?? []).map(itm => itm.id)
-}
 
 const addExtensions = async (notAddedExtensions: VSExtension[], extensionsFile: string) => {
   if (notAddedExtensions.length === 0) {
@@ -50,26 +45,68 @@ const addExtensions = async (notAddedExtensions: VSExtension[], extensionsFile: 
   await writeToExtensionsFile(extensions, extensionsFile)
 }
 
-program
-  .version('0.0.1')
-  .command('add <extension-name> [extensions.json]')
+const program = commander.version('0.0.1').on('--help', () => {
+  console.log('Examples:')
+  console.log('')
+  console.log(
+    '  $ add --add-extensions-with-license --itself mubaidr.vuejs-extension-pack ./extensions.json'
+  )
+})
+
+const addCommand = program.command('add <extension-name> [extensions.json]')
+
+addCommand
   .description(
     'add extension or extension pack to extension.json to publish to Open VSX, by default command adds extensions if pack meet all conditions only'
   )
+  .option(
+    '--add-extensions-with-license',
+    'Add extensions that have license even if extension pack contains extensions without license'
+  )
+  .option(
+    '--itself',
+    'Add extension pack to extensions list, this value is true by default if all extensions are present in Open VSX registry'
+  )
   .action(async (name: string, extensionsFile: string, program) => {
     try {
+      const extensionsToAdd: VSExtension[] = []
       const extPackInfo: Extension = await getExtInfoFromMicrosoftStore(name)
       const repo = await getRepoByVsixManifest(extPackInfo)
-      const extensionsFromFile: string[] = await getExtensionNamesFromFile(extensionsFile)
+
+      const [publisher, extname] = name.split('.')
+      const ext: OpenVsxExtension = (await findExtByNameInOpenVSX(
+        publisher,
+        extname
+      )) as OpenVsxExtension
+      if (!('notFound' in ext)) {
+        console.log(
+          `Extension is already published! https://open-vsx.org/extension/${ext.namespace}/${ext.name}`
+        )
+        process.exit(0)
+      }
 
       if (await isExtensionPack(name)) {
+        const openVsxExtensionList: Map<
+          string,
+          { id: string }
+        > = await ensureExtensionsFileAndReturnMap(extensionsFile)
         const {
           all,
           notFoundWithlicense,
           notFoundWithoutlicense,
           deprecatedExtensions,
           dontMeetConditions,
-        } = await getExtensionThatNotPresentOnOpenVSX(name)
+        } = await getExtensionThatNotPresentOnOpenVSX(name, openVsxExtensionList)
+
+        let info: VSExtension | undefined
+        let idx = notFoundWithlicense.findIndex(itm => itm.name === name)
+        if (idx !== -1) {
+          info = notFoundWithlicense.splice(idx, 1).shift()
+        }
+        idx = notFoundWithoutlicense.findIndex(itm => itm.name === name)
+        if (idx !== -1) {
+          info = notFoundWithoutlicense.splice(idx, 1).shift()
+        }
 
         if (dontMeetConditions.length > 0) {
           console.log(
@@ -110,7 +147,7 @@ program
                 .colorfy()}`
             )
             console.log(
-              `Please ask ext pack\'s authors to update extension id at ${cf()
+              `Please ask extension pack\'s authors to update extension id at ${cf()
                 .green(repo.repoUrl + '/issues')
                 .colorfy()}`
             )
@@ -128,12 +165,13 @@ program
 
         if (notFoundWithoutlicense.length > 0) {
           console.log(
-            `extensions without license (${notFoundWithoutlicense.length}):`,
+            `extensions with not identified license or license is not present (${notFoundWithoutlicense.length}):`,
             notFoundWithoutlicense
           )
           console.log(
             'Extensions without license CAN NOT BE uploaded to Open VSX registry, license must be present'
           )
+          console.log('')
         }
 
         const allConditionsAreMet =
@@ -145,9 +183,19 @@ program
           console.log('All extensions are present in Open VSX marketplace.')
         }
 
-        if (allConditionsAreMet || program.addExtensionsWithlicense) {
-          const extensionsToAdd = notFoundWithlicense.filter(
-            itm => !extensionsFromFile.find(name => itm.name === name)
+        if (program.itself && info) {
+          if (!info.license) {
+            console.error(
+              'Extension pack does not contain license, unable to add extension pack until license is present'
+            )
+            process.exit(1)
+          }
+          extensionsToAdd.push(info)
+        }
+
+        if (allConditionsAreMet || program.itself || program.addExtensionsWithlicense) {
+          extensionsToAdd.push(
+            ...notFoundWithlicense.filter(itm => !openVsxExtensionList.has(itm.name))
           )
 
           if (extensionsToAdd.length > 0) {
@@ -163,14 +211,5 @@ program
       console.error(err.message)
     }
   })
-  .option(
-    '--add-extensions-with-license',
-    'Add extensions that have license even if extension pack contains extensions without license'
-  )
-  .option('--extension-name <string>', "Extension's name to add")
-  .on('--help', () => {
-    console.log('Examples:')
-    console.log('')
-    console.log('  $ -n vymarkov.nodejs-devops-extension-pack')
-  })
-  .parse(process.argv)
+
+program.parse(process.argv)
