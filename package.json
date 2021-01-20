@@ -1,5 +1,5 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "main": "dist/cli.js",
   "files": [
@@ -10,12 +10,11 @@
     "node": ">=10"
   },
   "bin": {
-    "ext-utils": "./dist/cli.js"
+    "ext-utils": "./dist/cmd.js"
   },
   "scripts": {
     "dev": "tsdx watch",
-    "build": "tsdx build",
-    "postbuild": "cp ./src/cmd.js ./dist/cli.js",
+    "build": "tsdx build && cp ./src/cmd.js ./dist/cmd.js",
     "test": "tsdx test",
     "lint": "tsdx lint",
     "fmt": "yarn lint --fix",
@@ -35,7 +34,7 @@
     "singleQuote": true,
     "trailingComma": "es5"
   },
-  "name": "validate-vscode-extension-pack",
+  "name": "extpack",
   "author": "Vitaly Markov <vymarkov@gmail.com>",
   "module": "dist/cli.esm.js",
   "size-limit": [
